@@ -1,0 +1,73 @@
+* 實現
+** 框架
+使用 jedis 作爲 redis client 驅動。
+
+#+begin_src clojure :exports code :noweb yes :mkdirp yes :tangle /dev/shm/onyx-redis-build/src/onyx/plugin/redis.clj
+  (ns onyx.plugin.redis
+    (:require [onyx.peer.pipeline-extensions :as p-ext]
+              [taoensso.carmine :as car :refer (wcar)]
+              [onyx.static.default-vals :refer [arg-or-default]]
+              [taoensso.timbre :refer [info]]
+              [onyx.types :as t]
+              [onyx.peer.function]
+              [taoensso.carmine.connections]))
+
+  (defrecord Ops [zadd hset set])
+
+  (def operations
+    (->Ops car/zadd car/hset car/set))
+
+  <<life-cycle>>
+  <<output>>
+#+end_src
+** 輸出實現
+輸出(Writer)比較簡單，只用實現 write-batch 和 seal-resource 這兩個方法。
+
+#+begin_src clojure :noweb-ref output
+  (defrecord RedisWriter [conn]
+    p-ext/Pipeline
+    (read-batch [_ event]
+      (onyx.peer.function/read-batch event))
+
+    (write-batch [_ {:keys [onyx.core/results]}]
+      (wcar conn
+            (doall
+             (map (fn [{:keys [message]}]
+                    (let [op ((:op message) operations)
+                          args (:args message)]
+                      (info message)
+                      (apply op args)))
+                  (mapcat :leaves (:tree results)))))
+      {})
+    (seal-resource [_ _]
+      {}))
+
+  (defn writer [pipeline-data]
+    (let [catalog-entry (:onyx.core/task-map pipeline-data)
+          conn          {:spec {:host (:redis/host catalog-entry)
+                                :port (:redis/port catalog-entry)
+                                :read-timeout-ms (or (:redis/read-timeout-ms catalog-entry)
+                                                     4000)}}]
+      (->RedisWriter conn)))
+
+#+end_src
+
+** Life cycle
+#+begin_src clojure :noweb-ref life-cycle
+  (defn inject-conn-spec [{:keys [onyx.core/params] :as event}
+                          {:keys [onyx/param?
+                                  redis/host redis/port redis/read-timeout-ms] :as lifecycle}]
+    (when-not (and host port)
+      (throw (ex-info "Missing :redis/host or :redis/port in inject-redis-spec lifecyle." lifecycle)))
+    (let [conn {:spec {:host host
+                       :port port
+                       :read-timeout-ms (or read-timeout-ms 4000)}}]
+      {:onyx.core/params (if param?
+                           (conj params conn)
+                           params)
+       :redis/conn conn}))
+
+  (def reader-conn-spec
+    {:lifecycle/before-task-start inject-conn-spec})
+
+#+end_src
