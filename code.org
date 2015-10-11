@@ -30,14 +30,16 @@
       (onyx.peer.function/read-batch event))
 
     (write-batch [_ {:keys [onyx.core/results]}]
-      (wcar conn
-            (doall
-             (map (fn [{:keys [message]}]
-                    (let [op ((:op message) operations)
-                          args (:args message)]
-                      (info message)
-                      (apply op args)))
-                  (mapcat :leaves (:tree results)))))
+      (let [segments (mapcat :leaves (:tree results))]
+        (when (> 0 (count segments))
+          (wcar conn
+                (doall
+                 (map (fn [{:keys [message]}]
+                        (let [op ((:op message) operations)
+                              args (:args message)]
+                          ;;(info message)
+                          (apply op args)))
+                      segments)))))
       {})
     (seal-resource [_ _]
       {}))
