@@ -31,7 +31,7 @@
 
     (write-batch [_ {:keys [onyx.core/results]}]
       (let [segments (mapcat :leaves (:tree results))]
-        (when (> 0 (count segments))
+        (when (> (count segments) 0)
           (wcar conn
                 (doall
                  (map (fn [{:keys [message]}]
